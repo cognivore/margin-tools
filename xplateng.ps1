@@ -57,6 +57,22 @@ function GetEnglishTracks {
     return @{ 'audio' = $audioTrack; 'subtitle' = $subtitleTrack }
 }
 
+# Function to attempt fallback conversion if the main conversion fails
+function FallbackConversion {
+    param (
+        [string]$inputFile,
+        [string]$outputFile
+    )
+    Write-Host "Attempting fallback conversion for $inputFile..."
+    # Fallback conversion to re-encode the video and audio to ensure compatibility with MOV
+    & "ffmpeg" -i $inputFile -c:v libx264 -profile:v high -level:v 4.0 -pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 192k -ac 2 $outputFile
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Fallback conversion successful: $outputFile"
+    } else {
+        Write-Host "Fallback conversion failed for $inputFile"
+    }
+}
+
 # Loop through each file and process them
 foreach ($file in $files) {
     $videoName = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
@@ -85,10 +101,17 @@ foreach ($file in $files) {
     $audioTrack = $tracks['audio']
     $subtitleTrack = $tracks['subtitle']
 
-    # Convert the MKV to MOV using the identified English audio and subtitle tracks
-    # Remap the selected tracks to Stream 0 during conversion
+    # Try the main conversion with the identified English audio and subtitle tracks
+    Write-Host "Starting main conversion for $file.FullName..."
     & "ffmpeg" -i $file.FullName -map 0:v -map $audioTrack -map $subtitleTrack -c:v libx264 -profile:v high -level:v 4.0 -pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 192k -ac 2 -c:s mov_text $outputFile
-    Write-Host "Converted $file.FullName to MOV: $outputFile"
+
+    # Check if the main conversion succeeded, otherwise attempt fallback
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Main conversion failed for $file.FullName. Attempting fallback..."
+        FallbackConversion $file.FullName $outputFile
+    } else {
+        Write-Host "Conversion successful: $outputFile"
+    }
 }
 
 Write-Host "Conversion process completed."
