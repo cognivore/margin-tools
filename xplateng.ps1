@@ -30,28 +30,31 @@ function GetEnglishTracks {
     param (
         [string]$filePath
     )
-    
+
+    # Run FFmpeg to get the metadata of the file
     $ffmpegOutput = & "ffmpeg" -i $filePath 2>&1 | Out-String
 
-    # Extract audio tracks
-    $audioTracks = @()
-    if ($ffmpegOutput -match "(Stream #0:(\d+)\(\w+\): Audio:.*\benglish\b)") {
-        $matches = [regex]::Matches($ffmpegOutput, "(Stream #0:(\d+)\(\w+\): Audio:.*\benglish\b)")
-        foreach ($match in $matches) {
-            $audioTracks += $match.Groups[2].Value
-        }
+    # Extract audio and subtitle streams with 'eng' language tag
+    $audioTrack = ""
+    $subtitleTrack = ""
+
+    # Check for audio and subtitle streams with 'eng' language tag
+    $audioMatches = [regex]::Matches($ffmpegOutput, "Stream #(\d+):(\d+)\(eng\): Audio")
+    $subtitleMatches = [regex]::Matches($ffmpegOutput, "Stream #(\d+):(\d+)\(eng\): Subtitle")
+
+    if ($audioMatches.Count -gt 0) {
+        # Use the first match for the audio stream
+        $audioStream = $audioMatches[0].Groups
+        $audioTrack = "$($audioStream[1].Value):$($audioStream[2].Value)"
     }
 
-    # Extract subtitle tracks
-    $subtitleTracks = @()
-    if ($ffmpegOutput -match "(Stream #0:(\d+)\(\w+\): Subtitle:.*\benglish\b)") {
-        $matches = [regex]::Matches($ffmpegOutput, "(Stream #0:(\d+)\(\w+\): Subtitle:.*\benglish\b)")
-        foreach ($match in $matches) {
-            $subtitleTracks += $match.Groups[2].Value
-        }
+    if ($subtitleMatches.Count -gt 0) {
+        # Use the first match for the subtitle stream
+        $subtitleStream = $subtitleMatches[0].Groups
+        $subtitleTrack = "$($subtitleStream[1].Value):$($subtitleStream[2].Value)"
     }
 
-    return @{ 'audio' = $audioTracks; 'subtitle' = $subtitleTracks }
+    return @{ 'audio' = $audioTrack; 'subtitle' = $subtitleTrack }
 }
 
 # Loop through each file and process them
@@ -70,20 +73,21 @@ foreach ($file in $files) {
     $tracks = GetEnglishTracks $file.FullName
 
     # Validate that we found English tracks
-    if ($tracks['audio'].Count -eq 0) {
+    if (-not $tracks['audio']) {
         Write-Host "No English audio track found for $videoName"
         continue
     }
-    if ($tracks['subtitle'].Count -eq 0) {
+    if (-not $tracks['subtitle']) {
         Write-Host "No English subtitle track found for $videoName"
         continue
     }
 
-    $audioTrack = $tracks['audio'][0]
-    $subtitleTrack = $tracks['subtitle'][0]
+    $audioTrack = $tracks['audio']
+    $subtitleTrack = $tracks['subtitle']
 
     # Convert the MKV to MOV using the identified English audio and subtitle tracks
-    & "ffmpeg" -i $file.FullName -map 0:v -map 0:a:$audioTrack -map 0:s:$subtitleTrack -c:v libx264 -profile:v high -level:v 4.0 -pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 192k -ac 2 -c:s mov_text $outputFile
+    # Remap the selected tracks to Stream 0 during conversion
+    & "ffmpeg" -i $file.FullName -map 0:v -map $audioTrack -map $subtitleTrack -c:v libx264 -profile:v high -level:v 4.0 -pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 192k -ac 2 -c:s mov_text $outputFile
     Write-Host "Converted $file.FullName to MOV: $outputFile"
 }
 
